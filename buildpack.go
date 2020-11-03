@@ -64,6 +64,6 @@ type BuildpackInfo struct {
 	Homepage string `toml:"homepage,omitempty"`
 }
 
-func (bp BuildpackTOML) String() string {
-	return bp.Buildpack.Name + " " + bp.Buildpack.Version
+func (b BuildpackTOML) String() string {
+	return b.Buildpack.Name + " " + b.Buildpack.Version
 }

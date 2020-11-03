@@ -88,44 +88,6 @@ func testBuilder(t *testing.T, when spec.G, it spec.S) {
 				env.EXPECT().WithPlatform(platformDir).Return(append(os.Environ(), "TEST_ENV=Bv2"), nil)
 			})
 
-			when("platformApi is less than 0.4", func() {
-				it("writes the bom version at the top-level", func() {
-					builder.PlatformAPI = api.MustParse("0.3")
-					mkfile(t,
-						"[[entries]]\n"+
-							`name = "dep1"`+"\n"+
-							"[entries.metadata]\n"+
-							`version = "v1"`+"\n",
-						filepath.Join(appDir, "build-plan-out-A-v1.toml"),
-					)
-					buildMetadata, err := builder.Build()
-					if err != nil {
-						t.Fatalf("Unexpected error:\n%s\n", err)
-					}
-					h.AssertEq(t, buildMetadata.BOM[0].Version, "v1")
-					_, versionExist := buildMetadata.BOM[0].Metadata["version"]
-					h.AssertEq(t, versionExist, true)
-				})
-			})
-
-			when("platformApi is at least 0.4", func() {
-				it("writes the bom version at the lower-level (metadata entry)", func() {
-					builder.PlatformAPI = api.MustParse("0.4")
-					mkfile(t,
-						"[[entries]]\n"+
-							`name = "dep1"`+"\n"+
-							`version = "v1"`+"\n",
-						filepath.Join(appDir, "build-plan-out-A-v1.toml"),
-					)
-					buildMetadata, err := builder.Build()
-					if err != nil {
-						t.Fatalf("Unexpected error:\n%s\n", err)
-					}
-					h.AssertEq(t, buildMetadata.BOM[0].Version, "")
-					h.AssertEq(t, buildMetadata.BOM[0].Metadata["version"], "v1")
-				})
-			})
-
 			it("should ensure each buildpack's layers dir exists and process build layers", func() {
 				mkdir(t,
 					filepath.Join(layersDir, "A"),
@@ -165,60 +127,6 @@ func testBuilder(t *testing.T, when spec.G, it spec.S) {
 					filepath.Join(layersDir, "A"),
 					filepath.Join(layersDir, "B"),
 				)
-			})
-
-			it("should return build metadata when processes are present", func() {
-				mkfile(t,
-					`[[processes]]`+"\n"+
-						`type = "A-type"`+"\n"+
-						`command = "A-cmd"`+"\n"+
-						`[[processes]]`+"\n"+
-						`type = "override-type"`+"\n"+
-						`command = "A-cmd"`+"\n",
-					filepath.Join(appDir, "launch-A-v1.toml"),
-				)
-				mkfile(t,
-					`[[processes]]`+"\n"+
-						`type = "B-type"`+"\n"+
-						`command = "B-cmd"`+"\n"+
-						`[[processes]]`+"\n"+
-						`type = "override-type"`+"\n"+
-						`command = "B-cmd"`+"\n",
-					filepath.Join(appDir, "launch-B-v2.toml"),
-				)
-				metadata, err := builder.Build()
-				if err != nil {
-					t.Fatalf("Unexpected error:\n%s\n", err)
-				}
-				if s := cmp.Diff(metadata, &lifecycle.BuildMetadata{
-					Processes: []launch.Process{
-						{Type: "A-type", Command: "A-cmd", BuildpackID: "A"},
-						{Type: "B-type", Command: "B-cmd", BuildpackID: "B"},
-						{Type: "override-type", Command: "B-cmd", BuildpackID: "B"},
-					},
-					Buildpacks: []lifecycle.Buildpack{
-						{ID: "A", Version: "v1", API: "0.3", Homepage: "Buildpack A Homepage"},
-						{ID: "B", Version: "v2", API: "0.2"},
-					},
-				}); s != "" {
-					t.Fatalf("Unexpected metadata:\n%s\n", s)
-				}
-			})
-
-			it("should return build metadata when processes are not present", func() {
-				metadata, err := builder.Build()
-				if err != nil {
-					t.Fatalf("Unexpected error:\n%s\n", err)
-				}
-				if s := cmp.Diff(metadata, &lifecycle.BuildMetadata{
-					Processes: []launch.Process{},
-					Buildpacks: []lifecycle.Buildpack{
-						{ID: "A", Version: "v1", API: "0.3", Homepage: "Buildpack A Homepage"},
-						{ID: "B", Version: "v2", API: "0.2"},
-					},
-				}); s != "" {
-					t.Fatalf("Unexpected:\n%s\n", s)
-				}
 			})
 
 			it("should provide the platform dir", func() {
@@ -282,163 +190,441 @@ func testBuilder(t *testing.T, when spec.G, it spec.S) {
 				}
 			})
 
-			it("should provide a subset of the build plan to each buildpack", func() {
-				builder.Plan = lifecycle.BuildPlan{
-					Entries: []lifecycle.BuildPlanEntry{
-						{
-							Providers: []lifecycle.Buildpack{
-								{ID: "A", Version: "v1"},
-								{ID: "B", Version: "v2"},
-							},
-							Requires: []lifecycle.Require{
-								{Name: "dep1", Version: "v1"},
-							},
-						},
-						{
-							Providers: []lifecycle.Buildpack{
-								{ID: "A", Version: "v1"},
-								{ID: "B", Version: "v2"},
-							},
-							Requires: []lifecycle.Require{
-								{Name: "dep1-next", Version: "v2"},
-							},
-						},
-						{
-							Providers: []lifecycle.Buildpack{
-								{ID: "A", Version: "v1"},
-								{ID: "B", Version: "v2"},
-							},
-							Requires: []lifecycle.Require{
-								{Name: "dep1-replace", Version: "v3"},
-							},
-						},
-						{
-							Providers: []lifecycle.Buildpack{
-								{ID: "B", Version: "v2"},
-							},
-							Requires: []lifecycle.Require{
-								{Name: "dep2", Version: "v4"},
-							},
-						},
-						{
-							Providers: []lifecycle.Buildpack{
-								{ID: "B", Version: "v2"},
-							},
-							Requires: []lifecycle.Require{
-								{Name: "dep2-next", Version: "v5"},
-							},
-						},
-						{
-							Providers: []lifecycle.Buildpack{
-								{ID: "B", Version: "v2"},
-							},
-							Requires: []lifecycle.Require{
-								{Name: "dep2-replace", Version: "v6"},
-							},
-						},
-					},
-				}
+			when("buildpack plan", func() {
+				when("there are unmet entries", func() {
+					it("provide a subset of the build plan to each buildpack, getting unmet entries from the right place for each buildpack api", func() {
+						env.EXPECT().WithPlatform(platformDir).Return(append(os.Environ(), "TEST_ENV=Cv1"), nil)
 
-				mkfile(t,
-					"[[entries]]\n"+
-						`name = "dep1"`+"\n"+
-						`version = "v1"`+"\n"+
-						"[[entries]]\n"+
-						`name = "dep1-replace"`+"\n"+
-						`version = "v7"`+"\n",
-					filepath.Join(appDir, "build-plan-out-A-v1.toml"),
-				)
-				mkfile(t,
-					"[[entries]]\n"+
-						`name = "dep1-next"`+"\n"+
-						`version = "v9"`+"\n"+
-						"[[entries]]\n"+
-						`name = "dep2"`+"\n"+
-						`version = "v4"`+"\n"+
-						"[[entries]]\n"+
-						`name = "dep2-replace"`+"\n"+
-						`version = "v8"`+"\n",
-					filepath.Join(appDir, "build-plan-out-B-v2.toml"),
-				)
-				metadata, err := builder.Build()
-				if err != nil {
-					t.Fatalf("Unexpected error:\n%s\n", err)
-				}
-				if s := cmp.Diff(metadata, &lifecycle.BuildMetadata{
-					Processes: []launch.Process{},
-					Buildpacks: []lifecycle.Buildpack{
-						{ID: "A", Version: "v1", API: "0.3", Homepage: "Buildpack A Homepage"},
-						{ID: "B", Version: "v2", API: "0.2"},
-					},
-					BOM: []lifecycle.BOMEntry{
-						{
-							Require:   lifecycle.Require{Name: "dep1", Version: "v1"},
-							Buildpack: lifecycle.Buildpack{ID: "A", Version: "v1"},
-						},
-						{
-							Require:   lifecycle.Require{Name: "dep1-replace", Version: "v7"},
-							Buildpack: lifecycle.Buildpack{ID: "A", Version: "v1"},
-						},
-						{
-							Require:   lifecycle.Require{Name: "dep1-next", Version: "v9"},
-							Buildpack: lifecycle.Buildpack{ID: "B", Version: "v2"},
-						},
-						{
-							Require:   lifecycle.Require{Name: "dep2", Version: "v4"},
-							Buildpack: lifecycle.Buildpack{ID: "B", Version: "v2"},
-						},
-						{
-							Require:   lifecycle.Require{Name: "dep2-replace", Version: "v8"},
-							Buildpack: lifecycle.Buildpack{ID: "B", Version: "v2"},
-						},
-					},
-				}); s != "" {
-					t.Fatalf("Unexpected:\n%s\n", s)
-				}
+						builder.Group = lifecycle.BuildpackGroup{
+							Group: []lifecycle.Buildpack{
+								{ID: "A", Version: "v1", API: "0.4", Homepage: "Buildpack A Homepage"}, // unmet entries from build plan
+								{ID: "B", Version: "v2", API: "0.5"},                                   // unmet entries from build.toml
+								{ID: "C", Version: "v1", API: "0.5"},
+							},
+						}
+						builder.Plan = lifecycle.BuildPlan{
+							Entries: []lifecycle.BuildPlanEntry{
+								{
+									Providers: []lifecycle.Buildpack{
+										{ID: "A", Version: "v1"},
+										{ID: "B", Version: "v2"},
+									},
+									Requires: []lifecycle.Require{
+										{Name: "some-dep", Version: "v1"},
+									},
+								},
+								{
+									Providers: []lifecycle.Buildpack{
+										{ID: "A", Version: "v1"},
+										{ID: "B", Version: "v2"},
+									},
+									Requires: []lifecycle.Require{
+										{Name: "some-unmet-dep", Version: "v2"},
+									},
+								},
+								{
+									Providers: []lifecycle.Buildpack{
+										{ID: "A", Version: "v1"},
+										{ID: "B", Version: "v2"},
+									},
+									Requires: []lifecycle.Require{
+										{Name: "some-replace-version-dep", Version: "some-version-orig"},
+									},
+								},
+								{
+									Providers: []lifecycle.Buildpack{
+										{ID: "B", Version: "v2"},
+									},
+									Requires: []lifecycle.Require{
+										{Name: "other-dep", Version: "v4"},
+									},
+								},
+								{
+									Providers: []lifecycle.Buildpack{
+										{ID: "B", Version: "v2"},
+										{ID: "C", Version: "v1"},
+									},
+									Requires: []lifecycle.Require{
+										{Name: "other-unmet-dep", Version: "v5"},
+									},
+								},
+								{
+									Providers: []lifecycle.Buildpack{
+										{ID: "B", Version: "v2"},
+									},
+									Requires: []lifecycle.Require{
+										{Name: "other-replace-version-dep", Version: "other-version-orig"},
+									},
+								},
+								{
+									Providers: []lifecycle.Buildpack{
+										{ID: "C", Version: "v1"},
+									},
+									Requires: []lifecycle.Require{
+										{Name: "last-dep", Version: "v1"},
+									},
+								},
+							},
+						}
 
-				testPlan(t,
-					[]lifecycle.Require{
-						{Name: "dep1", Version: "v1"},
-						{Name: "dep1-next", Version: "v2"},
-						{Name: "dep1-replace", Version: "v3"},
-					},
-					filepath.Join(appDir, "build-plan-in-A-v1.toml"),
-				)
+						mkfile(t,
+							"[[entries]]\n"+
+								`name = "some-dep"`+"\n"+
+								`version = "v1"`+"\n"+
+								"[[entries]]\n"+
+								`name = "some-replace-version-dep"`+"\n"+
+								`version = "some-version-new"`+"\n",
+							filepath.Join(appDir, "build-plan-out-A-v1.toml"),
+						)
+						mkfile(t,
+							"[[bom]]\n"+
+								`name = "some-unmet-dep"`+"\n"+
+								"[bom.metadata]\n"+
+								`version = "v9"`+"\n"+
+								"[[bom]]\n"+
+								`name = "other-dep"`+"\n"+
+								"[bom.metadata]\n"+
+								`version = "v4"`+"\n"+
+								"[[bom]]\n"+
+								`name = "other-replace-version-dep"`+"\n"+
+								"[bom.metadata]\n"+
+								`version = "other-version-new"`+"\n",
+							filepath.Join(appDir, "launch-B-v2.toml"),
+						)
+						mkfile(t,
+							"[[unmet]]\n"+
+								`name = "other-unmet-dep"`+"\n",
+							filepath.Join(appDir, "build-B-v2.toml"),
+						)
+						mkfile(t,
+							"[[bom]]\n"+
+								`name = "other-unmet-dep"`+"\n"+
+								"[bom.metadata]\n"+
+								`version = "v5"`+"\n",
+							filepath.Join(appDir, "launch-C-v1.toml"),
+						)
+						metadata, err := builder.Build()
+						if err != nil {
+							t.Fatalf("Unexpected error:\n%s\n", err)
+						}
+						if s := cmp.Diff(metadata, &lifecycle.BuildMetadata{
+							Processes: []launch.Process{},
+							Buildpacks: []lifecycle.Buildpack{
+								{ID: "A", Version: "v1", API: "0.4", Homepage: "Buildpack A Homepage"},
+								{ID: "B", Version: "v2", API: "0.5"},
+								{ID: "C", Version: "v1", API: "0.5"},
+							},
+							BOM: []lifecycle.BOMEntry{
+								{
+									Require:   lifecycle.Require{Name: "some-dep", Version: "v1"},
+									Buildpack: lifecycle.Buildpack{ID: "A", Version: "v1"},
+								},
+								{
+									Require:   lifecycle.Require{Name: "some-replace-version-dep", Version: "some-version-new"},
+									Buildpack: lifecycle.Buildpack{ID: "A", Version: "v1"},
+								},
+								{
+									Require: lifecycle.Require{
+										Name:     "some-unmet-dep",
+										Version:  "v9",
+										Metadata: map[string]interface{}{"version": string("v9")},
+									},
+									Buildpack: lifecycle.Buildpack{ID: "B", Version: "v2"},
+								},
+								{
+									Require: lifecycle.Require{
+										Name:     "other-dep",
+										Version:  "v4",
+										Metadata: map[string]interface{}{"version": string("v4")}},
+									Buildpack: lifecycle.Buildpack{ID: "B", Version: "v2"},
+								},
+								{
+									Require: lifecycle.Require{
+										Name:     "other-replace-version-dep",
+										Version:  "other-version-new",
+										Metadata: map[string]interface{}{"version": string("other-version-new")}},
+									Buildpack: lifecycle.Buildpack{ID: "B", Version: "v2"},
+								},
+								{
+									Require: lifecycle.Require{
+										Name:     "other-unmet-dep",
+										Version:  "v5",
+										Metadata: map[string]interface{}{"version": string("v5")}},
+									Buildpack: lifecycle.Buildpack{ID: "C", Version: "v1"},
+								},
+							},
+						}); s != "" {
+							t.Fatalf("Unexpected:\n%s\n", s)
+						}
 
-				testPlan(t,
-					[]lifecycle.Require{
-						{Name: "dep1-next", Version: "v2"},
-						{Name: "dep2", Version: "v4"},
-						{Name: "dep2-next", Version: "v5"},
-						{Name: "dep2-replace", Version: "v6"},
-					},
-					filepath.Join(appDir, "build-plan-in-B-v2.toml"),
-				)
+						testPlan(t,
+							[]lifecycle.Require{
+								{Name: "some-dep", Version: "v1"},
+								{Name: "some-unmet-dep", Version: "v2"},
+								{Name: "some-replace-version-dep", Version: "some-version-orig"},
+							},
+							filepath.Join(appDir, "build-plan-in-A-v1.toml"),
+						)
+
+						testPlan(t,
+							[]lifecycle.Require{
+								{Name: "some-unmet-dep", Version: "v2"},
+								{Name: "other-dep", Version: "v4"},
+								{Name: "other-unmet-dep", Version: "v5"},
+								{Name: "other-replace-version-dep", Version: "other-version-orig"},
+							},
+							filepath.Join(appDir, "build-plan-in-B-v2.toml"),
+						)
+
+						testPlan(t,
+							[]lifecycle.Require{
+								{Name: "other-unmet-dep", Version: "v5"},
+								{Name: "last-dep", Version: "v1"},
+							},
+							filepath.Join(appDir, "build-plan-in-C-v1.toml"),
+						)
+					})
+				})
+
+				it("should convert metadata version to top level version for buildpacks with buildpack api 0.2", func() {
+					builder.Plan = lifecycle.BuildPlan{
+						Entries: []lifecycle.BuildPlanEntry{
+							{
+								Providers: []lifecycle.Buildpack{
+									{ID: "B", Version: "v2"},
+								},
+								Requires: []lifecycle.Require{
+									{Name: "dep2", Metadata: map[string]interface{}{"version": "v4"}},
+								},
+							},
+						},
+					}
+					_, err := builder.Build()
+					if err != nil {
+						t.Fatalf("Unexpected error:\n%s\n", err)
+					}
+					var bpPlanContents lifecycle.BuildpackPlan
+					_, err = toml.DecodeFile(filepath.Join(appDir, "build-plan-in-B-v2.toml"), &bpPlanContents)
+					if err != nil {
+						t.Fatalf("Unexpected error:\n%s\n", err)
+					}
+					h.AssertEq(t, bpPlanContents.Entries[0].Version, "v4")
+				})
 			})
 
-			it("should convert metadata version to top level version for buildpacks with buildpack api 0.2", func() {
-				builder.Plan = lifecycle.BuildPlan{
-					Entries: []lifecycle.BuildPlanEntry{
-						{
-							Providers: []lifecycle.Buildpack{
-								{ID: "B", Version: "v2"},
-							},
-							Requires: []lifecycle.Require{
-								{Name: "dep2", Metadata: map[string]interface{}{"version": "v4"}},
-							},
+			when("build metadata", func() {
+				it("should return build metadata when processes are present", func() {
+					mkfile(t,
+						`[[processes]]`+"\n"+
+							`type = "A-type"`+"\n"+
+							`command = "A-cmd"`+"\n"+
+							`[[processes]]`+"\n"+
+							`type = "override-type"`+"\n"+
+							`command = "A-cmd"`+"\n",
+						filepath.Join(appDir, "launch-A-v1.toml"),
+					)
+					mkfile(t,
+						`[[processes]]`+"\n"+
+							`type = "B-type"`+"\n"+
+							`command = "B-cmd"`+"\n"+
+							`[[processes]]`+"\n"+
+							`type = "override-type"`+"\n"+
+							`command = "B-cmd"`+"\n",
+						filepath.Join(appDir, "launch-B-v2.toml"),
+					)
+					metadata, err := builder.Build()
+					if err != nil {
+						t.Fatalf("Unexpected error:\n%s\n", err)
+					}
+					if s := cmp.Diff(metadata, &lifecycle.BuildMetadata{
+						Processes: []launch.Process{
+							{Type: "A-type", Command: "A-cmd", BuildpackID: "A"},
+							{Type: "B-type", Command: "B-cmd", BuildpackID: "B"},
+							{Type: "override-type", Command: "B-cmd", BuildpackID: "B"},
 						},
-					},
-				}
-				_, err := builder.Build()
-				if err != nil {
-					t.Fatalf("Unexpected error:\n%s\n", err)
-				}
-				var bpPlanContents lifecycle.BuildpackPlan
-				_, err = toml.DecodeFile(filepath.Join(appDir, "build-plan-in-B-v2.toml"), &bpPlanContents)
-				if err != nil {
-					t.Fatalf("Unexpected error:\n%s\n", err)
-				}
-				h.AssertEq(t, bpPlanContents.Entries[0].Version, "v4")
+						Buildpacks: []lifecycle.Buildpack{
+							{ID: "A", Version: "v1", API: "0.3", Homepage: "Buildpack A Homepage"},
+							{ID: "B", Version: "v2", API: "0.2"},
+						},
+					}); s != "" {
+						t.Fatalf("Unexpected metadata:\n%s\n", s)
+					}
+				})
+
+				it("should return build metadata when processes are not present", func() {
+					metadata, err := builder.Build()
+					if err != nil {
+						t.Fatalf("Unexpected error:\n%s\n", err)
+					}
+					if s := cmp.Diff(metadata, &lifecycle.BuildMetadata{
+						Processes: []launch.Process{},
+						Buildpacks: []lifecycle.Buildpack{
+							{ID: "A", Version: "v1", API: "0.3", Homepage: "Buildpack A Homepage"},
+							{ID: "B", Version: "v2", API: "0.2"},
+						},
+					}); s != "" {
+						t.Fatalf("Unexpected:\n%s\n", s)
+					}
+				})
+			})
+
+			when("bom", func() {
+				when("platform api < 0.4", func() {
+					it.Before(func() {
+						builder.PlatformAPI = api.MustParse("0.3")
+					})
+
+					it("converts metadata.version to top level version", func() {
+						mkfile(t,
+							"[[entries]]\n"+
+								`name = "dep1"`+"\n"+
+								"[entries.metadata]\n"+
+								`version = "v1"`+"\n",
+							filepath.Join(appDir, "build-plan-out-A-v1.toml"),
+						)
+						metadata, err := builder.Build()
+						if err != nil {
+							t.Fatalf("Unexpected error:\n%s\n", err)
+						}
+						if s := cmp.Diff(metadata.BOM, []lifecycle.BOMEntry{
+							{
+								Require: lifecycle.Require{
+									Name:     "dep1",
+									Version:  "v1",
+									Metadata: map[string]interface{}{"version": string("v1")},
+								},
+								Buildpack: lifecycle.Buildpack{ID: "A", Version: "v1"},
+							},
+						}); s != "" {
+							t.Fatalf("Unexpected:\n%s\n", s)
+						}
+					})
+
+					it("should get bom entries from the right place for each buildpack api", func() {
+						builder.Group = lifecycle.BuildpackGroup{
+							Group: []lifecycle.Buildpack{
+								{ID: "A", Version: "v1", API: "0.4", Homepage: "Buildpack A Homepage"}, // bom entries from build plan
+								{ID: "B", Version: "v1", API: "0.5"},                                   // bom entries from launch.toml
+							},
+						}
+						mkfile(t,
+							"[[entries]]\n"+
+								`name = "dep1"`+"\n"+
+								"[entries.metadata]\n"+
+								`version = "v1"`+"\n",
+							filepath.Join(appDir, "build-plan-out-A-v1.toml"),
+						)
+						mkfile(t,
+							"[[bom]]\n"+
+								`name = "dep2"`+"\n"+
+								"[bom.metadata]\n"+
+								`version = "v2"`+"\n",
+							filepath.Join(appDir, "launch-B-v1.toml"),
+						)
+						metadata, err := builder.Build()
+						if err != nil {
+							t.Fatalf("Unexpected error:\n%s\n", err)
+						}
+						if s := cmp.Diff(metadata.BOM, []lifecycle.BOMEntry{
+							{
+								Require: lifecycle.Require{
+									Name:     "dep1",
+									Version:  "v1",
+									Metadata: map[string]interface{}{"version": string("v1")},
+								},
+								Buildpack: lifecycle.Buildpack{ID: "A", Version: "v1"},
+							},
+							{
+								Require: lifecycle.Require{
+									Name:     "dep2",
+									Version:  "v2",
+									Metadata: map[string]interface{}{"version": string("v2")},
+								},
+								Buildpack: lifecycle.Buildpack{ID: "B", Version: "v1"},
+							},
+						}); s != "" {
+							t.Fatalf("Unexpected:\n%s\n", s)
+						}
+					})
+				})
+
+				when("platform api 0.4+", func() {
+					it.Before(func() {
+						builder.PlatformAPI = api.MustParse("0.4")
+					})
+
+					it("converts top level version to metadata.version", func() {
+						mkfile(t,
+							"[[entries]]\n"+
+								`name = "dep1"`+"\n"+
+								`version = "v1"`+"\n",
+							filepath.Join(appDir, "build-plan-out-A-v1.toml"),
+						)
+						metadata, err := builder.Build()
+						if err != nil {
+							t.Fatalf("Unexpected error:\n%s\n", err)
+						}
+						if s := cmp.Diff(metadata.BOM, []lifecycle.BOMEntry{
+							{
+								Require: lifecycle.Require{
+									Name:     "dep1",
+									Version:  "",
+									Metadata: map[string]interface{}{"version": string("v1")},
+								},
+								Buildpack: lifecycle.Buildpack{ID: "A", Version: "v1"},
+							},
+						}); s != "" {
+							t.Fatalf("Unexpected:\n%s\n", s)
+						}
+					})
+
+					it("should get bom entries from the right place for each buildpack api", func() {
+						builder.Group = lifecycle.BuildpackGroup{
+							Group: []lifecycle.Buildpack{
+								{ID: "A", Version: "v1", API: "0.4", Homepage: "Buildpack A Homepage"}, // bom entries from build plan
+								{ID: "B", Version: "v1", API: "0.5"},                                   // bom entries from launch.toml
+							},
+						}
+						mkfile(t,
+							"[[entries]]\n"+
+								`name = "dep1"`+"\n"+
+								"[entries.metadata]\n"+
+								`version = "v1"`+"\n",
+							filepath.Join(appDir, "build-plan-out-A-v1.toml"),
+						)
+						mkfile(t,
+							"[[bom]]\n"+
+								`name = "dep2"`+"\n"+
+								"[bom.metadata]\n"+
+								`version = "v2"`+"\n",
+							filepath.Join(appDir, "launch-B-v1.toml"),
+						)
+						metadata, err := builder.Build()
+						if err != nil {
+							t.Fatalf("Unexpected error:\n%s\n", err)
+						}
+						if s := cmp.Diff(metadata.BOM, []lifecycle.BOMEntry{
+							{
+								Require: lifecycle.Require{
+									Name:     "dep1",
+									Version:  "",
+									Metadata: map[string]interface{}{"version": string("v1")},
+								},
+								Buildpack: lifecycle.Buildpack{ID: "A", Version: "v1"},
+							},
+							{
+								Require: lifecycle.Require{
+									Name:     "dep2",
+									Version:  "",
+									Metadata: map[string]interface{}{"version": string("v2")},
+								},
+								Buildpack: lifecycle.Buildpack{ID: "B", Version: "v1"},
+							},
+						}); s != "" {
+							t.Fatalf("Unexpected:\n%s\n", s)
+						}
+					})
+				})
 			})
 		})
 
@@ -590,45 +776,95 @@ func testBuilder(t *testing.T, when spec.G, it spec.S) {
 				}
 			})
 
-			when("platformApi is less than 0.4", func() {
-				when("bom version is set both in the top level and in the metadata", func() {
-					it("returns an error", func() {
-						env.EXPECT().WithPlatform(platformDir).Return(append(os.Environ(), "TEST_ENV=Av1"), nil)
-						env.EXPECT().WithPlatform(platformDir).Return(append(os.Environ(), "TEST_ENV=Bv2"), nil)
-						builder.PlatformAPI = api.MustParse("0.3")
-						mkfile(t,
-							"[[entries]]\n"+
-								`name = "dep1"`+"\n"+
-								`version = "v2"`+"\n"+
-								"[entries.metadata]\n"+
-								`version = "v1"`+"\n",
-							filepath.Join(appDir, "build-plan-out-A-v1.toml"),
-						)
-						_, err := builder.Build()
-						h.AssertNotNil(t, err)
-						expected := "top level version does not match metadata version"
-						h.AssertStringContains(t, err.Error(), expected)
+			when("invalid bom", func() {
+				when("platform api < 0.4", func() {
+					when("bom version is set both in the top level and in the metadata", func() {
+						it("returns an error", func() {
+							env.EXPECT().WithPlatform(platformDir).Return(append(os.Environ(), "TEST_ENV=Av1"), nil)
+							env.EXPECT().WithPlatform(platformDir).Return(append(os.Environ(), "TEST_ENV=Bv2"), nil)
+							builder.PlatformAPI = api.MustParse("0.3")
+							mkfile(t,
+								"[[entries]]\n"+
+									`name = "dep1"`+"\n"+
+									`version = "v2"`+"\n"+
+									"[entries.metadata]\n"+
+									`version = "v1"`+"\n",
+								filepath.Join(appDir, "build-plan-out-A-v1.toml"),
+							)
+							_, err := builder.Build()
+							h.AssertNotNil(t, err)
+							expected := "top level version does not match metadata version"
+							h.AssertStringContains(t, err.Error(), expected)
+						})
+					})
+				})
+
+				when("platform api >= 0.4", func() {
+					when("bom version is set both in the top level and in the metadata", func() {
+						it("returns an error", func() {
+							env.EXPECT().WithPlatform(platformDir).Return(append(os.Environ(), "TEST_ENV=Av1"), nil)
+							env.EXPECT().WithPlatform(platformDir).Return(append(os.Environ(), "TEST_ENV=Bv2"), nil)
+							builder.PlatformAPI = api.MustParse("0.4")
+							mkfile(t,
+								"[[entries]]\n"+
+									`name = "dep1"`+"\n"+
+									`version = "v2"`+"\n"+
+									"[entries.metadata]\n"+
+									`version = "v1"`+"\n",
+								filepath.Join(appDir, "build-plan-out-A-v1.toml"),
+							)
+							_, err := builder.Build()
+							h.AssertNotNil(t, err)
+							expected := "metadata version does not match top level version"
+							h.AssertStringContains(t, err.Error(), expected)
+						})
 					})
 				})
 			})
 
-			when("platformApi is at least 0.4", func() {
-				when("bom version is set both in the top level and in the metadata", func() {
-					it("returns an error", func() {
-						env.EXPECT().WithPlatform(platformDir).Return(append(os.Environ(), "TEST_ENV=Av1"), nil)
+			when("invalid unmet entries", func() {
+				when("buildpack api >= 0.5", func() {
+					it.Before(func() {
 						env.EXPECT().WithPlatform(platformDir).Return(append(os.Environ(), "TEST_ENV=Bv2"), nil)
-						builder.PlatformAPI = api.MustParse("0.4")
+						builder.Group = lifecycle.BuildpackGroup{
+							Group: []lifecycle.Buildpack{
+								{ID: "B", Version: "v2", API: "0.5"}, // unmet entries from build.toml
+							},
+						}
+						builder.Plan = lifecycle.BuildPlan{
+							Entries: []lifecycle.BuildPlanEntry{
+								{
+									Providers: []lifecycle.Buildpack{
+										{ID: "B", Version: "v2"},
+									},
+									Requires: []lifecycle.Require{
+										{Name: "dep2", Metadata: map[string]interface{}{"version": "v4"}},
+									},
+								},
+							},
+						}
+					})
+
+					it("should error when name is not provided", func() {
 						mkfile(t,
-							"[[entries]]\n"+
-								`name = "dep1"`+"\n"+
-								`version = "v2"`+"\n"+
-								"[entries.metadata]\n"+
-								`version = "v1"`+"\n",
-							filepath.Join(appDir, "build-plan-out-A-v1.toml"),
+							"[[unmet]]\n",
+							filepath.Join(appDir, "build-B-v2.toml"),
 						)
 						_, err := builder.Build()
 						h.AssertNotNil(t, err)
-						expected := "metadata version does not match top level version"
+						expected := "name is required"
+						h.AssertStringContains(t, err.Error(), expected)
+					})
+
+					it("should error when name is not valid", func() {
+						mkfile(t,
+							"[[unmet]]\n"+
+								`name = "unknown-dep"`+"\n",
+							filepath.Join(appDir, "build-B-v2.toml"),
+						)
+						_, err := builder.Build()
+						h.AssertNotNil(t, err)
+						expected := "must match a requested dependency"
 						h.AssertStringContains(t, err.Error(), expected)
 					})
 				})
