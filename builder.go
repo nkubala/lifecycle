@@ -169,13 +169,13 @@ func (b *Builder) BuildConfig() (BuildConfig, error) {
 
 func (b *BuildpackTOML) Build(bp Buildpack, plan BuildPlan, config BuildConfig) (BuildResult, error) {
 	foundPlan := plan.find(bp.noAPI().noHomepage())
-	if api.MustParse(bp.API).Equal(api.MustParse("0.2")) {
+	if api.MustParse(b.API).Equal(api.MustParse("0.2")) {
 		for i := range foundPlan.Entries {
 			foundPlan.Entries[i].convertMetadataToVersion()
 		}
 	}
 
-	bpLayersDir, bpPlanPath, err := preparePaths(bp, foundPlan, config.LayersDir, config.PlanDir)
+	bpLayersDir, bpPlanPath, err := preparePaths(b.Buildpack.ID, foundPlan, config.LayersDir, config.PlanDir)
 	if err != nil {
 		return BuildResult{}, err
 	}
@@ -219,8 +219,8 @@ func (b *BuildpackTOML) runBuildCmd(bpLayersDir, bpPlanPath string, config Build
 	return nil
 }
 
-func preparePaths(bp Buildpack, foundPlan BuildpackPlan, layersDir, planDir string) (string, string, error) {
-	bpDirName := launch.EscapeID(bp.ID)
+func preparePaths(bpID string, foundPlan BuildpackPlan, layersDir, planDir string) (string, string, error) {
+	bpDirName := launch.EscapeID(bpID)
 	bpLayersDir := filepath.Join(layersDir, bpDirName)
 	bpPlanDir := filepath.Join(planDir, bpDirName)
 	if err := os.MkdirAll(bpLayersDir, 0777); err != nil {
